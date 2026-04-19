@@ -1,3 +1,5 @@
+// GGMPlayerController.cpp
+
 #include "GGMPlayerController.h"
 #include "GGMCharacter.h"
 #include "Player/GGMCharacterMovementComponent.h"
@@ -29,6 +31,9 @@ void AGGMPlayerController::BeginPlay()
 
 	ResetCachedMoveAxes(false);
 	bForwardHeld = false;
+	PendingCombatLookYawInput = 0.f;
+	CombatIdleLookYawOffset = 0.f;
+	CombatMoveInputGraceRemaining = 0.f;
 
 	if (!IsLocalController())
 	{
@@ -51,6 +56,15 @@ void AGGMPlayerController::BeginPlay()
 	RefreshCameraCacheFromPawn(GetPawn());
 	PushCachedMoveAxesToPawn();
 	PushSprintForwardHeldToPawn();
+
+	if (APawn* P = GetPawn())
+	{
+		CombatDesiredFacingYaw = FRotator::NormalizeAxis(P->GetActorRotation().Yaw);
+	}
+	else
+	{
+		CombatDesiredFacingYaw = FRotator::NormalizeAxis(GetControlRotation().Yaw);
+	}
 }
 
 void AGGMPlayerController::OnPossess(APawn* InPawn)
@@ -60,12 +74,16 @@ void AGGMPlayerController::OnPossess(APawn* InPawn)
 	bAutoManageActiveCameraTarget = false;
 	ResetCachedMoveAxes(false);
 	bForwardHeld = false;
+	PendingCombatLookYawInput = 0.f;
+	CombatIdleLookYawOffset = 0.f;
+	CombatMoveInputGraceRemaining = 0.f;
 
 	if (InPawn)
 	{
 		SetViewTarget(InPawn);
 		RefreshCameraCacheFromPawn(InPawn);
 		SetControlRotation(FRotator(InitialCameraPitch, InPawn->GetActorRotation().Yaw, 0.f));
+		CombatDesiredFacingYaw = FRotator::NormalizeAxis(InPawn->GetActorRotation().Yaw);
 	}
 
 	PushCachedMoveAxesToPawn();
@@ -81,11 +99,15 @@ void AGGMPlayerController::AcknowledgePossession(APawn* P)
 	{
 		ResetCachedMoveAxes(false);
 		bForwardHeld = false;
+		PendingCombatLookYawInput = 0.f;
+		CombatIdleLookYawOffset = 0.f;
+		CombatMoveInputGraceRemaining = 0.f;
 		RefreshCameraCacheFromPawn(P);
 
 		if (P)
 		{
 			SetControlRotation(FRotator(InitialCameraPitch, P->GetActorRotation().Yaw, 0.f));
+			CombatDesiredFacingYaw = FRotator::NormalizeAxis(P->GetActorRotation().Yaw);
 		}
 
 		PushCachedMoveAxesToPawn();
@@ -106,11 +128,15 @@ void AGGMPlayerController::OnRep_Pawn()
 
 	ResetCachedMoveAxes(false);
 	bForwardHeld = false;
+	PendingCombatLookYawInput = 0.f;
+	CombatIdleLookYawOffset = 0.f;
+	CombatMoveInputGraceRemaining = 0.f;
 	RefreshCameraCacheFromPawn(GetPawn());
 
 	if (APawn* P = GetPawn())
 	{
 		SetControlRotation(FRotator(InitialCameraPitch, P->GetActorRotation().Yaw, 0.f));
+		CombatDesiredFacingYaw = FRotator::NormalizeAxis(P->GetActorRotation().Yaw);
 	}
 
 	PushCachedMoveAxesToPawn();
@@ -392,8 +418,40 @@ void AGGMPlayerController::Look(const FInputActionValue& Value)
 		return;
 	}
 
+	AGGMCharacter* GGMChar = GetGGMCharacterPawn();
+	if (!GGMChar)
+	{
+		return;
+	}
+
 	const FVector2D LookAxis = Value.Get<FVector2D>();
 
+	const bool bHasRawMoveInput =
+		!FMath::IsNearlyZero(CachedMoveForwardAxis) ||
+		!FMath::IsNearlyZero(CachedMoveRightAxis);
+
+	const bool bHasCombatMoveInput = bHasRawMoveInput || (CombatMoveInputGraceRemaining > 0.f);
+
+	if (GGMChar->GetCurrentLocomotionMode() == EGGM_LocomotionMode::Combat)
+	{
+		if (!bHasCombatMoveInput)
+		{
+			PendingCombatLookYawInput = 0.f;
+			CombatIdleLookYawOffset = FMath::Clamp(
+				CombatIdleLookYawOffset + LookAxis.X,
+				-CombatIdleLookMaxYawDeg,
+				CombatIdleLookMaxYawDeg);
+
+			AddPitchInput(LookAxis.Y * CombatLookPitchMultiplier);
+			return;
+		}
+
+		PendingCombatLookYawInput += LookAxis.X;
+		AddPitchInput(LookAxis.Y * CombatLookPitchMultiplier);
+		return;
+	}
+
+	CombatIdleLookYawOffset = 0.f;
 	AddYawInput(LookAxis.X);
 	AddPitchInput(LookAxis.Y);
 }
@@ -595,6 +653,9 @@ void AGGMPlayerController::ShowDeathScreenDebug()
 	ResetCachedMoveAxes(true);
 	bForwardHeld = false;
 	PushSprintForwardHeldToPawn();
+	PendingCombatLookYawInput = 0.f;
+	CombatIdleLookYawOffset = 0.f;
+	CombatMoveInputGraceRemaining = 0.f;
 
 	if (PlayerCameraManager)
 	{
@@ -636,7 +697,68 @@ void AGGMPlayerController::PlayerTick(float DeltaTime)
 		return;
 	}
 
-	GGMChar->SubmitDesiredFacingYaw(GetControlRotation().Yaw);
+	const bool bHasRawMoveInput =
+		!FMath::IsNearlyZero(CachedMoveForwardAxis) ||
+		!FMath::IsNearlyZero(CachedMoveRightAxis);
+
+	if (GGMChar->GetCurrentLocomotionMode() == EGGM_LocomotionMode::Combat)
+	{
+		if (bHasRawMoveInput)
+		{
+			CombatMoveInputGraceRemaining = CombatMoveInputGraceTime;
+		}
+		else
+		{
+			CombatMoveInputGraceRemaining = FMath::Max(0.f, CombatMoveInputGraceRemaining - DeltaTime);
+		}
+	}
+	else
+	{
+		CombatMoveInputGraceRemaining = 0.f;
+	}
+
+	const bool bHasCombatMoveInput = bHasRawMoveInput || (CombatMoveInputGraceRemaining > 0.f);
+
+	if (GGMChar->GetCurrentLocomotionMode() == EGGM_LocomotionMode::Combat)
+	{
+		const float ActorYaw = FRotator::NormalizeAxis(GGMChar->GetActorRotation().Yaw);
+		const FRotator CurrentControlRotation = GetControlRotation();
+
+		if (!bHasCombatMoveInput)
+		{
+			CombatDesiredFacingYaw = ActorYaw;
+			PendingCombatLookYawInput = 0.f;
+
+			const float CameraYaw = FRotator::NormalizeAxis(ActorYaw + CombatIdleLookYawOffset);
+			SetControlRotation(FRotator(CurrentControlRotation.Pitch, CameraYaw, 0.f));
+		}
+		else
+		{
+			CombatIdleLookYawOffset = FMath::FInterpConstantTo(
+				CombatIdleLookYawOffset,
+				0.f,
+				DeltaTime,
+				CombatIdleLookReturnSpeedDegPerSec);
+
+			const float MaxYawStepThisTick = FMath::Max(0.f, CombatMoveYawSpeedDegPerSec) * DeltaTime;
+			const float AppliedYawStep = FMath::Clamp(PendingCombatLookYawInput, -MaxYawStepThisTick, MaxYawStepThisTick);
+
+			CombatDesiredFacingYaw = FRotator::NormalizeAxis(ActorYaw + AppliedYawStep);
+			PendingCombatLookYawInput = 0.f;
+
+			const float CameraYaw = FRotator::NormalizeAxis(ActorYaw + CombatIdleLookYawOffset);
+			SetControlRotation(FRotator(CurrentControlRotation.Pitch, CameraYaw, 0.f));
+		}
+
+		GGMChar->SubmitDesiredFacingYaw(CombatDesiredFacingYaw);
+	}
+	else
+	{
+		PendingCombatLookYawInput = 0.f;
+		CombatIdleLookYawOffset = 0.f;
+		CombatDesiredFacingYaw = FRotator::NormalizeAxis(GetControlRotation().Yaw);
+		GGMChar->SubmitDesiredFacingYaw(GetControlRotation().Yaw);
+	}
 
 	if (GGMChar->IsDeadStateActive())
 	{

@@ -1,3 +1,5 @@
+// Game/Combat/GGMCombatComponent.h
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -54,6 +56,9 @@ struct FGGMCombatTuningCache
 
 	UPROPERTY()
 	TObjectPtr<USoundBase> HitBlockSound = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<USoundBase> MissSound = nullptr;
 
 	UPROPERTY()
 	float AttackLockOnBlockedHit = 0.f;
@@ -162,6 +167,9 @@ protected:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastPlayHitSound(bool bBlocked, FVector SoundLocation);
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastPlayMissSound(FVector SoundLocation);
 
 	UFUNCTION()
 	void OnRep_CombatState();

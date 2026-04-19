@@ -43,6 +43,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Audio")
 	TObjectPtr<USoundBase> HitBlockSound = nullptr;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Audio")
+	TObjectPtr<USoundBase> MissSound = nullptr;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Punish")
 	float AttackLockOnBlockedHit = 1.5f;
 

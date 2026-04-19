@@ -35,7 +35,7 @@ struct FGGM_MoveSpeedStats
 	float Sprint = 800.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
-	float CombatForwardMultiplier = 0.85f;
+	float CombatForwardMultiplier = 0.75f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stats")
 	float CombatStrafeBackwardMultiplier = 0.85f;

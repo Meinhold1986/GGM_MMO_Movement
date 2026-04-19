@@ -1,3 +1,5 @@
+// Source/GGM/Game/Combat/GGMWeaponDataAsset.h
+
 #pragma once
 
 #include "CoreMinimal.h"
@@ -54,7 +56,6 @@ class GGM_API UGGMWeaponDataAsset : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
-
 	UGGMWeaponDataAsset();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
@@ -77,4 +78,7 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound")
 	USoundBase* HitBlockSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound")
+	USoundBase* MissSound;
 };

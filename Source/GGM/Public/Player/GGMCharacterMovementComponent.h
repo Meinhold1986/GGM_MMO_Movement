@@ -1,10 +1,9 @@
-// GGMCharacterMovementComponent.h
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/CharacterMovementReplication.h"
+#include "Net/UnrealNetwork.h"
 #include "Player/GGMMovementTypes.h"
 #include "GGMCharacterMovementComponent.generated.h"
 
@@ -30,10 +29,10 @@ struct FGGMRuntimeLocomotionSnapshot
 	GENERATED_BODY()
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
-	EGGM_LocomotionMode LocomotionMode{};
+	EGGM_LocomotionMode LocomotionMode = EGGM_LocomotionMode::Travel;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
-	EGGM_LocomotionGroup LocomotionGroup{};
+	EGGM_LocomotionGroup LocomotionGroup = EGGM_LocomotionGroup::Idle;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
 	FVector DesiredMoveWorldDirection = FVector::ZeroVector;
@@ -50,82 +49,52 @@ struct FGGMRemoteLocomotionSnapshot
 {
 	GENERATED_BODY()
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	int32 SnapshotSequence = 0;
+	UPROPERTY()
+	uint16 SnapshotSequence = 0;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
+	UPROPERTY()
 	float MoveSpeed = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
+	UPROPERTY()
 	float BlendForwardAxis = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
+	UPROPERTY()
 	float BlendRightAxis = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	FVector_NetQuantizeNormal MoveDirection = FVector(1.f, 0.f, 0.f);
+	UPROPERTY()
+	FVector MoveDirection = FVector::ZeroVector;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
+	UPROPERTY()
 	float VisualYaw = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
+	UPROPERTY()
 	EGGM_LocomotionGroup LocomotionGroup = EGGM_LocomotionGroup::Idle;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
+	UPROPERTY()
 	bool bIsSprinting = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote|Debug")
+	UPROPERTY()
 	float SourceVelocity2D = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote|Debug")
+	UPROPERTY()
 	float SourceMaxWalkSpeed = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote|Debug")
+	UPROPERTY()
 	float SourceSmoothedMoveSpeed = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote|Debug")
+	UPROPERTY()
 	float SourceActorYaw = 0.f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote|Debug")
+	UPROPERTY()
 	float SourceDesiredFacingYaw = 0.f;
-
-	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess)
-	{
-		Ar << SnapshotSequence;
-		Ar << MoveSpeed;
-		Ar << BlendForwardAxis;
-		Ar << BlendRightAxis;
-		MoveDirection.NetSerialize(Ar, Map, bOutSuccess);
-		Ar << VisualYaw;
-
-		uint8 LocomotionGroupByte = static_cast<uint8>(LocomotionGroup);
-		uint8 SprintingBit = bIsSprinting ? 1 : 0;
-
-		Ar << LocomotionGroupByte;
-		Ar.SerializeBits(&SprintingBit, 1);
-
-		Ar << SourceVelocity2D;
-		Ar << SourceMaxWalkSpeed;
-		Ar << SourceSmoothedMoveSpeed;
-		Ar << SourceActorYaw;
-		Ar << SourceDesiredFacingYaw;
-
-		if (Ar.IsLoading())
-		{
-			LocomotionGroup = static_cast<EGGM_LocomotionGroup>(LocomotionGroupByte);
-			bIsSprinting = SprintingBit != 0;
-		}
-
-		bOutSuccess = !Ar.IsError();
-		return true;
-	}
 
 	bool operator==(const FGGMRemoteLocomotionSnapshot& Other) const
 	{
-		return FMath::IsNearlyEqual(MoveSpeed, Other.MoveSpeed)
+		return SnapshotSequence == Other.SnapshotSequence
+			&& FMath::IsNearlyEqual(MoveSpeed, Other.MoveSpeed)
 			&& FMath::IsNearlyEqual(BlendForwardAxis, Other.BlendForwardAxis)
 			&& FMath::IsNearlyEqual(BlendRightAxis, Other.BlendRightAxis)
-			&& MoveDirection == Other.MoveDirection
+			&& MoveDirection.Equals(Other.MoveDirection)
 			&& FMath::IsNearlyEqual(VisualYaw, Other.VisualYaw)
 			&& LocomotionGroup == Other.LocomotionGroup
 			&& bIsSprinting == Other.bIsSprinting
@@ -142,69 +111,52 @@ struct FGGMRemoteLocomotionSnapshot
 	}
 };
 
-template<>
-struct TStructOpsTypeTraits<FGGMRemoteLocomotionSnapshot> : public TStructOpsTypeTraitsBase2<FGGMRemoteLocomotionSnapshot>
+struct FSavedMove_GGM : public FSavedMove_Character
 {
-	enum
-	{
-		WithNetSerializer = true,
-		WithIdenticalViaEquality = true
-	};
-};
-
-class FSavedMove_GGM : public FSavedMove_Character
-{
-public:
 	typedef FSavedMove_Character Super;
+
+	uint8 SavedMoveInputIntent = 0;
+	bool bSavedSprintInputPressed = false;
+	bool bSavedSprintForwardHeld = false;
 
 	virtual void Clear() override;
 	virtual uint8 GetCompressedFlags() const override;
 	virtual bool CanCombineWith(const FSavedMovePtr& NewMove, ACharacter* Character, float MaxDelta) const override;
 	virtual void SetMoveFor(ACharacter* Character, float InDeltaTime, const FVector& NewAccel, FNetworkPredictionData_Client_Character& ClientData) override;
 	virtual void PrepMoveFor(ACharacter* Character) override;
-
-public:
-	uint8 SavedMoveInputIntent = 0;
-	uint8 bSavedSprintInputPressed : 1;
-	uint8 bSavedSprintForwardHeld : 1;
 };
 
-class FGGMCharacterNetworkMoveData : public FCharacterNetworkMoveData
+struct FGGMCharacterNetworkMoveData : public FCharacterNetworkMoveData
 {
-public:
 	typedef FCharacterNetworkMoveData Super;
 
-	virtual void ClientFillNetworkMoveData(const FSavedMove_Character& ClientMove, ENetworkMoveType MoveType) override;
-	virtual bool Serialize(UCharacterMovementComponent& CharacterMovement, FArchive& Ar, UPackageMap* PackageMap, ENetworkMoveType MoveType) override;
-
-public:
 	uint8 MoveInputIntent = 0;
 	uint8 bSprintInputPressed = 0;
 	uint8 bSprintForwardHeld = 0;
+
+	virtual void ClientFillNetworkMoveData(const FSavedMove_Character& ClientMove, ENetworkMoveType MoveType) override;
+	virtual bool Serialize(UCharacterMovementComponent& CharacterMovement, FArchive& Ar, UPackageMap* PackageMap, ENetworkMoveType MoveType) override;
 };
 
-class FGGMCharacterNetworkMoveDataContainer : public FCharacterNetworkMoveDataContainer
+struct FGGMCharacterNetworkMoveDataContainer : public FCharacterNetworkMoveDataContainer
 {
-public:
 	FGGMCharacterNetworkMoveDataContainer();
 
-public:
 	FGGMCharacterNetworkMoveData CustomNewMoveData;
 	FGGMCharacterNetworkMoveData CustomPendingMoveData;
 	FGGMCharacterNetworkMoveData CustomOldMoveData;
 };
 
-class FNetworkPredictionData_Client_GGM : public FNetworkPredictionData_Client_Character
+struct FNetworkPredictionData_Client_GGM : public FNetworkPredictionData_Client_Character
 {
-public:
-	explicit FNetworkPredictionData_Client_GGM(const UCharacterMovementComponent& ClientMovement);
-
 	typedef FNetworkPredictionData_Client_Character Super;
+
+	FNetworkPredictionData_Client_GGM(const UCharacterMovementComponent& ClientMovement);
 
 	virtual FSavedMovePtr AllocateNewMove() override;
 };
 
-UCLASS(BlueprintType, Blueprintable)
+UCLASS()
 class GGM_API UGGMCharacterMovementComponent : public UCharacterMovementComponent
 {
 	GENERATED_BODY()
@@ -213,162 +165,55 @@ public:
 	UGGMCharacterMovementComponent();
 
 	virtual void BeginPlay() override;
-	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
-	virtual class FNetworkPredictionData_Client* GetPredictionData_Client() const override;
+	virtual FNetworkPredictionData_Client* GetPredictionData_Client() const override;
 	virtual void MoveAutonomous(float ClientTimeStamp, float DeltaTime, uint8 CompressedFlags, const FVector& NewAccel) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-public:
 	void SetOwnerRawMoveAxes(float InForwardAxis, float InRightAxis);
+	void SetRawMoveInput(float InForwardAxis, float InRightAxis) { SetOwnerRawMoveAxes(InForwardAxis, InRightAxis); }
+
 	void SetOwnerDesiredFacingYaw(float InDesiredFacingYaw);
+	void SetDesiredFacingYaw(float InDesiredFacingYaw) { SetOwnerDesiredFacingYaw(InDesiredFacingYaw); }
+
 	void SetSprintInputPressed(bool bPressed);
 	void SetSprintForwardHeld(bool bHeld);
+
 	void ApplyInputIntent(EGGM_MoveInputIntent InIntent);
 	void ApplyCurrentReplicatedMoveData();
 
-	UFUNCTION(BlueprintCallable, Category = "Movement")
-	void SetRawMoveInput(float InForwardAxis, float InRightAxis)
-	{
-		SetOwnerRawMoveAxes(InForwardAxis, InRightAxis);
-	}
-
-	UFUNCTION(BlueprintCallable, Category = "Movement")
-	void SetDesiredFacingYaw(float InDesiredFacingYaw)
-	{
-		SetOwnerDesiredFacingYaw(InDesiredFacingYaw);
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	float GetMoveForwardIntent() const
-	{
-		return OwnerRawForwardAxis;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	float GetMoveRightIntent() const
-	{
-		return OwnerRawRightAxis;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
 	float GetBlendForwardAxis() const;
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
 	float GetBlendRightAxis() const;
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
 	float GetMoveSpeed() const;
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
 	float GetVisualYaw() const;
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
 	FVector GetMoveDirection() const;
 
-	UFUNCTION(BlueprintPure, Category = "Movement|Remote")
-	float GetRemoteVisualYawTarget() const
-	{
-		return RemoteVisualYawTarget;
-	}
+	float GetMoveForwardIntent() const { return OwnerRawForwardAxis; }
+	float GetMoveRightIntent() const { return OwnerRawRightAxis; }
 
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	float GetOwnerRawForwardAxis() const
-	{
-		return OwnerRawForwardAxis;
-	}
+	void ForceStopSprint(bool bPreserveFutureIntent);
+	void ApplyRemoteLocomotionSnapshot(const FGGMRemoteLocomotionSnapshot& InSnapshot);
 
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	float GetOwnerRawRightAxis() const
-	{
-		return OwnerRawRightAxis;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	float GetDesiredFacingYaw() const
-	{
-		return DesiredFacingYaw;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	EGGM_MoveInputIntent GetMoveInputIntent() const
-	{
-		return MoveInputIntent;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	EGGM_LocomotionMode GetCurrentLocomotionMode() const
-	{
-		return CurrentLocomotionMode;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement")
-	EGGM_LocomotionGroup GetCurrentLocomotionGroup() const
-	{
-		return CurrentLocomotionGroup;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	bool IsSprinting() const
-	{
-		return IsSimulatedProxyInstance() ? bRemoteVisualIsSprinting : bIsSprinting;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	bool IsSprintInputPressed() const
-	{
-		return bSprintInputPressed;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	bool IsSprintForwardHeld() const
-	{
-		return bSprintForwardHeld;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	FVector GetLockedSprintMoveDirection() const
-	{
-		return LockedSprintMoveDirection;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	float GetLockedSprintYaw() const
-	{
-		return LockedSprintYaw;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	float GetSprintCurrentSpeed() const
-	{
-		return SprintCurrentSpeed;
-	}
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Sprint")
-	bool CanEnterSprint() const;
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Jump")
 	bool CanStartJump() const;
 
-	UFUNCTION(BlueprintCallable, Category = "Movement|Sprint")
-	void BeginSprint();
+	EGGM_MoveInputIntent GetMoveInputIntent() const { return MoveInputIntent; }
+	bool IsSprintInputPressed() const { return bSprintInputPressed; }
+	bool IsSprintForwardHeld() const { return bSprintForwardHeld; }
+	bool IsSprinting() const { return bIsSprinting; }
+	bool IsSprintingForAnimation() const { return IsSimulatedProxyInstance() ? bRemoteVisualIsSprinting : bIsSprinting; }
 
-	UFUNCTION(BlueprintCallable, Category = "Movement|Sprint")
-	void ForceStopSprint(bool bPreserveFutureIntent);
-
-	UFUNCTION(BlueprintPure, Category = "Movement|Remote")
-	FGGMRemoteLocomotionSnapshot BuildRemoteLocomotionSnapshot() const;
-
-	UFUNCTION(BlueprintCallable, Category = "Movement|Remote")
-	void ApplyRemoteLocomotionSnapshot(const FGGMRemoteLocomotionSnapshot& InSnapshot);
+	float GetAnimationRuntimeSpeed() const;
+	float GetAuthorityFacingYawSource() const;
 
 protected:
 	void RefreshRuntimeMovementState();
-	void RefreshRuntimeMovementSnapshot();
 	void RefreshRuntimeInputState();
 	void RefreshRuntimeLocomotionModeState();
 	void RefreshRuntimeLocomotionGroupState();
 	void RefreshRuntimeMovementSpeed();
+	void RefreshRuntimeMovementSnapshot();
+
 	void TickSmoothedMovementState(float DeltaTime);
 	void TickSprint(float DeltaTime);
 	void UpdateAirborneState();
@@ -385,22 +230,23 @@ protected:
 	float GetBaseSpeed() const;
 	float GetForwardBaseSpeed() const;
 	float GetSprintTargetSpeed() const;
-	float GetAnimationRuntimeSpeed() const;
 
 	void ExitSprint();
 	void CaptureSprintLockState();
 	bool ShouldExitSprintForAirborne() const;
+	void BeginSprint();
+
 	bool HasMovementInput() const;
 	bool IsTravelMode() const;
 	bool IsGroundedForSprint() const;
 	bool HasSprintStamina() const;
+	bool CanEnterSprint() const;
 
+	float GetMovementBasisYaw() const;
 	FVector GetCameraRelativeMoveDirection() const;
 	FVector GetAppliedMoveDirection() const;
 	float GetAppliedRotationTargetYaw() const;
 	float GetNormalizedYaw(float InYaw) const;
-	float GetAuthorityFacingYawSource() const;
-	float GetMovementBasisYaw() const;
 
 	bool IsSimulatedProxyInstance() const;
 
@@ -409,130 +255,126 @@ protected:
 
 	void SetDesiredFacingYawInternal(float InDesiredFacingYaw);
 
-protected:
-	UPROPERTY()
-	TObjectPtr<AGGMCharacter> CachedGGMCharacter;
-
-protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Intent")
-	float DesiredFacingYaw = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Intent")
-	float OwnerRawForwardAxis = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Intent")
-	float OwnerRawRightAxis = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Intent")
-	bool bSprintInputPressed = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Intent")
-	bool bSprintForwardHeld = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Intent")
-	EGGM_MoveInputIntent MoveInputIntent = EGGM_MoveInputIntent::None;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
-	EGGM_LocomotionMode CurrentLocomotionMode = EGGM_LocomotionMode::Travel;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
-	EGGM_LocomotionGroup CurrentLocomotionGroup{};
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement")
-	FGGMRuntimeLocomotionSnapshot BaseSnapshot;
-
-protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	bool bIsSprinting = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	bool bRemoteVisualIsSprinting = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	float RemoteBlendForwardAxis = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	float RemoteBlendRightAxis = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	float RemoteMoveSpeed = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	FVector RemoteMoveDirection = FVector::ZeroVector;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	float RemoteAppliedVisualYaw = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	FVector LockedSprintMoveDirection = FVector::ZeroVector;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	float LockedSprintYaw = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	float SprintCurrentSpeed = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	float SprintAccelerationRate = 250.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	float SprintDecelerationRate = 350.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Sprint")
-	float SprintExitCompleteSpeedTolerance = 2.f;
-
-protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Airborne")
-	bool bWasFallingLastFrame = false;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Airborne")
-	FVector AirborneLockedMoveDirection = FVector::ZeroVector;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Airborne")
-	float AirborneLockedYaw = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Airborne")
-	bool bAirborneLockActive = false;
-
-protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Smoothing")
-	FVector SmoothedMoveWorldDirection = FVector::ZeroVector;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Smoothing")
-	float SmoothedMoveSpeed = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Smoothing")
-	bool bSmoothedMovementInitialized = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Smoothing")
-	float MovementAccelerationRate = 2400.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Smoothing")
-	float MovementDecelerationRate = 2800.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Smoothing")
-	float MovementDirectionInterpSpeed = 14.f;
-
-protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	float RemoteVisualYawTarget = 0.f;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Movement|Remote")
-	bool bRemoteVisualYawInitialized = false;
-
-protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Rotation")
-	float MovementRotationStartSpeedDegPerSec = 4320.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Rotation")
-	float MovementRotationMovingSpeedDegPerSec = 2880.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement|Rotation")
-	float RemoteMovementVisualYawSyncSpeedDegPerSec = 1080.f;
+	FGGMRemoteLocomotionSnapshot BuildRemoteLocomotionSnapshot() const;
 
 protected:
 	UPROPERTY(Transient)
-	mutable int32 RemoteSnapshotSequenceCounter = 0;
+	TObjectPtr<AGGMCharacter> CachedGGMCharacter = nullptr;
 
-	FGGMCharacterNetworkMoveDataContainer GGMNetworkMoveDataContainer;
+	UPROPERTY(Transient)
+	FGGMRuntimeLocomotionSnapshot BaseSnapshot;
+
+	UPROPERTY(Transient)
+	EGGM_MoveInputIntent MoveInputIntent = EGGM_MoveInputIntent::None;
+
+	UPROPERTY(Transient)
+	EGGM_LocomotionMode CurrentLocomotionMode = EGGM_LocomotionMode::Travel;
+
+	UPROPERTY(Transient)
+	EGGM_LocomotionGroup CurrentLocomotionGroup = EGGM_LocomotionGroup::Idle;
+
+	UPROPERTY(Transient)
+	float OwnerRawForwardAxis = 0.f;
+
+	UPROPERTY(Transient)
+	float OwnerRawRightAxis = 0.f;
+
+	UPROPERTY(Transient)
+	float DesiredFacingYaw = 0.f;
+
+	UPROPERTY(Transient)
+	bool bSprintInputPressed = false;
+
+	UPROPERTY(Transient)
+	bool bSprintForwardHeld = false;
+
+	UPROPERTY(Transient)
+	bool bIsSprinting = false;
+
+	UPROPERTY(Transient)
+	float SprintCurrentSpeed = 0.f;
+
+	UPROPERTY(Transient)
+	FVector LockedSprintMoveDirection = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	float LockedSprintYaw = 0.f;
+
+	UPROPERTY(Transient)
+	bool bAirborneLockActive = false;
+
+	UPROPERTY(Transient)
+	bool bWasFallingLastFrame = false;
+
+	UPROPERTY(Transient)
+	FVector AirborneLockedMoveDirection = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	float AirborneLockedYaw = 0.f;
+
+	UPROPERTY(Transient)
+	bool bSmoothedMovementInitialized = false;
+
+	UPROPERTY(Transient)
+	FVector SmoothedMoveWorldDirection = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	float SmoothedMoveSpeed = 0.f;
+
+	UPROPERTY(Transient)
+	bool bRemoteVisualYawInitialized = false;
+
+	UPROPERTY(Transient)
+	float RemoteVisualYawTarget = 0.f;
+
+	UPROPERTY(Transient)
+	float RemoteAppliedVisualYaw = 0.f;
+
+	UPROPERTY(Transient)
+	bool bRemoteVisualIsSprinting = false;
+
+	UPROPERTY(Transient)
+	float RemoteBlendForwardAxis = 0.f;
+
+	UPROPERTY(Transient)
+	float RemoteBlendRightAxis = 0.f;
+
+	UPROPERTY(Transient)
+	float RemoteMoveSpeed = 0.f;
+
+	UPROPERTY(Transient)
+	FVector RemoteMoveDirection = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	mutable uint16 RemoteSnapshotSequenceCounter = 0;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float MovementAccelerationRate = 2400.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float MovementDecelerationRate = 2800.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float MovementDirectionInterpSpeed = 14.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float MovementRotationStartSpeedDegPerSec = 4320.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float MovementRotationMovingSpeedDegPerSec = 2880.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float RemoteMovementVisualYawSyncSpeedDegPerSec = 1080.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float SprintAccelerationRate = 1200.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float SprintDecelerationRate = 1200.f;
+
+	UPROPERTY(EditAnywhere, Category = "GGM|Movement")
+	float SprintExitCompleteSpeedTolerance = 1.f;
+
+protected:
+	mutable FGGMCharacterNetworkMoveDataContainer GGMNetworkMoveDataContainer;
 };

@@ -1,5 +1,3 @@
-// GGMCharacterMovementComponent.cpp
-
 #include "Player/GGMCharacterMovementComponent.h"
 #include "../../Player/GGMCharacter.h"
 
@@ -500,14 +498,25 @@ void UGGMCharacterMovementComponent::UpdateRotation(float DeltaTime)
 
 	const bool bHasMovement = HasMovementInput();
 	const bool bLowSpeed = Velocity.SizeSquared2D() <= FMath::Square(5.f);
-	const float TurnSpeed = (bHasMovement && bLowSpeed)
+
+	float BaseTurnSpeed = (bHasMovement && bLowSpeed)
 		? MovementRotationStartSpeedDegPerSec
 		: MovementRotationMovingSpeedDegPerSec;
+
+	float RotationMultiplier = 1.f;
+
+	if (CachedGGMCharacter &&
+		CachedGGMCharacter->GetCurrentLocomotionMode() == EGGM_LocomotionMode::Combat)
+	{
+		RotationMultiplier = 0.5f;
+	}
+
+	const float FinalTurnSpeed = BaseTurnSpeed * RotationMultiplier;
 
 	const float NewYaw = FMath::FixedTurn(
 		CurrentYaw,
 		TargetYaw,
-		TurnSpeed * DeltaTime);
+		FinalTurnSpeed * DeltaTime);
 
 	CharacterOwner->SetActorRotation(FRotator(0.f, NewYaw, 0.f));
 }
@@ -631,48 +640,67 @@ float UGGMCharacterMovementComponent::GetBaseSpeed() const
 	}
 
 	const FGGM_MoveSpeedStats& Stats = CachedGGMCharacter->MoveSpeedStats;
+	float Result = 0.f;
 
 	if (bIsSprinting)
 	{
-		return SprintCurrentSpeed;
+		Result = SprintCurrentSpeed;
 	}
-
-	switch (CurrentLocomotionMode)
+	else
 	{
-	case EGGM_LocomotionMode::Flex:
-		return Stats.Flex;
-
-	case EGGM_LocomotionMode::Combat:
-		switch (CurrentLocomotionGroup)
+		switch (CurrentLocomotionMode)
 		{
-		case EGGM_LocomotionGroup::Forward:
-			return Stats.Forward * Stats.CombatForwardMultiplier;
+		case EGGM_LocomotionMode::Flex:
+			Result = Stats.Flex;
+			break;
 
-		case EGGM_LocomotionGroup::Strafe:
-		case EGGM_LocomotionGroup::Backward:
-			return Stats.StrafeBackward * Stats.CombatStrafeBackwardMultiplier;
+		case EGGM_LocomotionMode::Combat:
+			switch (CurrentLocomotionGroup)
+			{
+			case EGGM_LocomotionGroup::Forward:
+				Result = Stats.Forward * Stats.CombatForwardMultiplier;
+				break;
 
-		case EGGM_LocomotionGroup::Idle:
+			case EGGM_LocomotionGroup::Strafe:
+			case EGGM_LocomotionGroup::Backward:
+				Result = Stats.StrafeBackward * Stats.CombatStrafeBackwardMultiplier;
+				break;
+
+			case EGGM_LocomotionGroup::Idle:
+			default:
+				Result = 0.f;
+				break;
+			}
+			break;
+
+		case EGGM_LocomotionMode::Travel:
 		default:
-			return 0.f;
-		}
+			switch (CurrentLocomotionGroup)
+			{
+			case EGGM_LocomotionGroup::Forward:
+				Result = Stats.Forward;
+				break;
 
-	case EGGM_LocomotionMode::Travel:
-	default:
-		switch (CurrentLocomotionGroup)
-		{
-		case EGGM_LocomotionGroup::Forward:
-			return Stats.Forward;
+			case EGGM_LocomotionGroup::Strafe:
+			case EGGM_LocomotionGroup::Backward:
+				Result = Stats.StrafeBackward;
+				break;
 
-		case EGGM_LocomotionGroup::Strafe:
-		case EGGM_LocomotionGroup::Backward:
-			return Stats.StrafeBackward;
-
-		case EGGM_LocomotionGroup::Idle:
-		default:
-			return 0.f;
+			case EGGM_LocomotionGroup::Idle:
+			default:
+				Result = 0.f;
+				break;
+			}
+			break;
 		}
 	}
+
+	if (CurrentLocomotionMode == EGGM_LocomotionMode::Combat && CachedGGMCharacter->IsBlocking())
+	{
+		Result *= 0.8f;
+	}
+
+	return Result;
 }
 
 float UGGMCharacterMovementComponent::GetForwardBaseSpeed() const
@@ -856,17 +884,7 @@ float UGGMCharacterMovementComponent::GetNormalizedYaw(float InYaw) const
 
 float UGGMCharacterMovementComponent::GetAuthorityFacingYawSource() const
 {
-	if (CharacterOwner && CharacterOwner->HasAuthority())
-	{
-		if (const AController* OwnerController = CharacterOwner->GetController())
-		{
-			return FRotator::NormalizeAxis(OwnerController->GetControlRotation().Yaw);
-		}
-
-		return FRotator::NormalizeAxis(CharacterOwner->GetActorRotation().Yaw);
-	}
-
-	return DesiredFacingYaw;
+	return FRotator::NormalizeAxis(DesiredFacingYaw);
 }
 
 bool UGGMCharacterMovementComponent::IsSimulatedProxyInstance() const

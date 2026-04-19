@@ -158,13 +158,7 @@ public:
 	}
 
 	UFUNCTION(BlueprintCallable, Category = "Movement")
-	void SubmitDesiredFacingYaw(float Yaw)
-	{
-		if (UGGMCharacterMovementComponent* MoveComp = GetGGMCharacterMovementComponent())
-		{
-			MoveComp->SetDesiredFacingYaw(Yaw);
-		}
-	}
+	void SubmitDesiredFacingYaw(float Yaw);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	UGGMCombatComponent* CombatComponent = nullptr;
@@ -182,6 +176,9 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void ServerSetWeaponDrawn(bool bNewWeaponDrawn);
+
+	UFUNCTION(Server, Unreliable)
+	void ServerSetDesiredFacingYaw(uint16 QuantizedYaw);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Movement")
 	EGGM_LocomotionMode GetCurrentLocomotionMode() const
@@ -316,4 +313,10 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_RemoteLocomotionSnapshot)
 	FGGMRemoteLocomotionSnapshot RemoteLocomotionSnapshot;
+
+	UPROPERTY(Transient)
+	bool bHasSentDesiredFacingYawToServer = false;
+
+	UPROPERTY(Transient)
+	uint16 LastSentDesiredFacingYawToServer = 0;
 };

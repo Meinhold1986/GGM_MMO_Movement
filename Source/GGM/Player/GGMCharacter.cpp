@@ -12,6 +12,24 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogGGMAnimReplicationDebug, Log, All);
 
+namespace
+{
+	static uint16 GGM_QuantizeYawToUInt16(float InYaw)
+	{
+		const float Normalized = FRotator::NormalizeAxis(InYaw);
+		const float ZeroTo360 = (Normalized < 0.f) ? (Normalized + 360.f) : Normalized;
+		const float Alpha = ZeroTo360 / 360.f;
+		return static_cast<uint16>(FMath::RoundToInt(FMath::Clamp(Alpha, 0.f, 1.f) * 65535.f));
+	}
+
+	static float GGM_DequantizeYawFromUInt16(uint16 InValue)
+	{
+		const float Alpha = static_cast<float>(InValue) / 65535.f;
+		const float ZeroTo360 = Alpha * 360.f;
+		return FRotator::NormalizeAxis(ZeroTo360);
+	}
+}
+
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 namespace
 {
@@ -88,6 +106,9 @@ void AGGMCharacter::BeginPlay()
 	CurrentHealth = FMath::Clamp(CurrentHealth, 0.f, MaxHealth);
 	CurrentStamina = FMath::Clamp(CurrentStamina, 0.f, MaxStamina);
 	bIsDead = CurrentHealth <= 0.f;
+
+	bHasSentDesiredFacingYawToServer = false;
+	LastSentDesiredFacingYawToServer = 0;
 
 	RefreshDeathPresentationAndMovementState(bIsDead);
 	RefreshWeaponDrawnPresentationAndMovementState();
@@ -201,6 +222,44 @@ void AGGMCharacter::ApplyWeaponDrawnVisuals()
 	{
 		ShieldMesh->SetHiddenInGame(!bDrawn);
 		ShieldMesh->SetVisibility(bDrawn, true);
+	}
+}
+
+void AGGMCharacter::SubmitDesiredFacingYaw(float Yaw)
+{
+	if (UGGMCharacterMovementComponent* MoveComp = GetGGMCharacterMovementComponent())
+	{
+		MoveComp->SetOwnerDesiredFacingYaw(Yaw);
+	}
+
+	if (!IsLocallyControlled() || HasAuthority())
+	{
+		return;
+	}
+
+	const uint16 QuantizedYaw = GGM_QuantizeYawToUInt16(Yaw);
+
+	if (bHasSentDesiredFacingYawToServer && LastSentDesiredFacingYawToServer == QuantizedYaw)
+	{
+		return;
+	}
+
+	LastSentDesiredFacingYawToServer = QuantizedYaw;
+	bHasSentDesiredFacingYawToServer = true;
+
+	ServerSetDesiredFacingYaw(QuantizedYaw);
+}
+
+void AGGMCharacter::ServerSetDesiredFacingYaw_Implementation(uint16 QuantizedYaw)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (UGGMCharacterMovementComponent* MoveComp = GetGGMCharacterMovementComponent())
+	{
+		MoveComp->SetOwnerDesiredFacingYaw(GGM_DequantizeYawFromUInt16(QuantizedYaw));
 	}
 }
 
